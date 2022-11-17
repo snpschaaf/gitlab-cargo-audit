@@ -10,38 +10,101 @@ use petgraph::graph::NodeIndex;
 use petgraph::visit::Bfs;
 use rustsec::advisory::Severity;
 use rustsec::cargo_lock::dependency::Tree;
-use rustsec::{Database, Vulnerability};
-use rustsec::lockfile::Lockfile;
+use rustsec::{Database, Report, Vulnerability};
+use rustsec::Lockfile;
 use serde_json;
+use clap;
+use clap::{Parser, Subcommand};
 
-const CARGO_TOML: &str = "Cargo.toml";
-const LOCKFILE: &str = "Cargo.lock";
-const PACKAGE_MANAGER: &str = "cargo";
-const REPORT_VERSION: &str = "14.0.6";
-const SCANNER_ID: &str = "cargo_audit";
-const SCANNER_NAME: &str = "cargo-audit";
+/// Simple program to greet a person
+#[derive(Parser, Debug, Clone)]
+#[command(author, version, about, long_about = None)]
+struct CliArgs {
+    /// Path of the Cargo TOML file
+    #[arg(short, long, default_value = "Cargo.toml")]
+    cargo_toml: String,
+
+    /// Path of the Cargo lock file
+    #[arg(short, long, default_value = "Cargo.lock")]
+    lockfile: String,
+
+
+    #[command(subcommand)]
+    action: Mode
+}
+
+#[derive(Subcommand, Debug, Default, Clone)]
+enum Mode {
+    #[default]
+    Auto,
+    Json {
+        /// Parse from json file
+        audit_json: String,
+
+        /// output file
+        out: String,
+    },
+}
+
+
+#[derive(Clone, Debug)]
+struct NormalArgs {
+    package_manager: String,
+    report_version: String,
+    scanner_id: String,
+    scanner_name: String,
+}
+
+impl Default for NormalArgs {
+    fn default() -> Self {
+        Self {
+            package_manager: "cargo".to_string(),
+            report_version: "14.0.6".to_string(),
+            scanner_id: "cargo_audit".to_string(),
+            scanner_name: "cargo-audit".to_string(),
+        }
+    }
+}
+
 
 fn main() -> anyhow::Result<()> {
-    let lockfile = Lockfile::load(LOCKFILE).context("failed to load lockfile")?;
-    let cargo_toml = load_toml(CARGO_TOML).context("failed to load Cargo.toml")?;
-    let packages = discover_packages(&cargo_toml).context("failed to discover packages")?;
-    let dependency_tree = lockfile.dependency_tree().context("failed to generate dependency tree")?;
+
+    let args: CliArgs = CliArgs::parse();
+
+    match args.action.clone() {
+        Mode::Auto => {
+            normal(args.clone())
+        },
+        Mode::Json { audit_json, out } => {
+            json(audit_json, out, args.clone())
+        },
+    }
+
+
+}
+
+fn json(audit_json: impl AsRef<Path>, out: impl AsRef<Path>, args: CliArgs) -> anyhow::Result<()> {
+    let file = File::open(audit_json.as_ref())?;
+    let report : Report = serde_json::from_reader(file).context("Parse error")?;
+    let vulnerabilities = report.vulnerabilities.list;
+    let opts = NormalArgs::default();
+
+    let report = gen_report(args, opts, &vulnerabilities)?;
+
+    let of = File::create(out.as_ref())?;
+
+    serde_json::to_writer_pretty(of, &report)?;
+    Ok(())
+}
+
+fn normal(args: CliArgs) -> anyhow::Result<()> {
+    let lockfile = Lockfile::load(args.lockfile.clone()).context("failed to load lockfile")?;
     let database = Database::fetch().context("failed to fetch advisory-db")?;
     let vulnerabilities = database.vulnerabilities(&lockfile);
+    let opts = NormalArgs::default();
 
-    print_vulnerabilities(&vulnerabilities);
 
-    let report = report::Report {
-        version: REPORT_VERSION.to_string(),
-        vulnerabilities: report_vulnerabilities(&vulnerabilities),
-        dependency_files: vec![
-            report::DependencyFile {
-                path: LOCKFILE.to_string(),
-                package_manager: PACKAGE_MANAGER.to_string(),
-                dependencies: report_dependencies(&dependency_tree, &packages)
-            }
-        ],
-    };
+    let report = gen_report(args, opts, &vulnerabilities)?;
 
     let stdout = io::stdout();
     let stdout = stdout.lock();
@@ -49,6 +112,26 @@ fn main() -> anyhow::Result<()> {
     serde_json::to_writer_pretty(stdout, &report)?;
 
     Ok(())
+}
+
+fn gen_report(args: CliArgs, opts: NormalArgs, vulnerabilities: &[Vulnerability]) -> anyhow::Result<report::Report>  {
+    let lockfile = Lockfile::load(args.lockfile.clone()).context("failed to load lockfile")?;
+    let cargo_toml = load_toml(args.cargo_toml.clone()).context("failed to load Cargo.toml")?;
+    let packages = discover_packages(&cargo_toml).context("failed to discover packages")?;
+    let dependency_tree = lockfile.dependency_tree().context("failed to generate dependency tree")?;
+
+    print_vulnerabilities(&vulnerabilities);
+    Ok(report::Report {
+        vulnerabilities: report_vulnerabilities(&vulnerabilities, opts.clone(), args.lockfile.clone()),
+        version: opts.report_version.clone(),
+        dependency_files: vec![
+            report::DependencyFile {
+                path: args.lockfile.clone(),
+                package_manager: opts.package_manager.clone(),
+                dependencies: report_dependencies(&dependency_tree, &packages)
+            }
+        ],
+    })
 }
 
 /// Load TOML file
@@ -152,7 +235,7 @@ fn dependency_path(predecessor: &[NodeIndex], mut nx: NodeIndex) -> Vec<report::
 }
 
 /// Build list of [`report::Vulnerability`] from list of [`Vulnerability`]s.
-fn report_vulnerabilities(vulnerabilities: &[Vulnerability]) -> Vec<report::Vulnerability> {
+fn report_vulnerabilities(vulnerabilities: &[Vulnerability], opts: NormalArgs, lockfile: String) -> Vec<report::Vulnerability> {
     vulnerabilities.iter().map(|vuln| {
         report::Vulnerability {
             id: Some(vuln.advisory.id.to_string()),  // FIXME: Should be a UUID
@@ -183,7 +266,7 @@ fn report_vulnerabilities(vulnerabilities: &[Vulnerability]) -> Vec<report::Vuln
                 None
             },
             location: report::Location {
-                file: String::from(LOCKFILE),
+                file: lockfile.clone(),
                 dependency: report::Dependency {
                     package: Some(report::Package {
                         name: Some(vuln.package.name.to_string()),
@@ -193,8 +276,8 @@ fn report_vulnerabilities(vulnerabilities: &[Vulnerability]) -> Vec<report::Vuln
                 },
             },
             scanner: report::Scanner {
-                id: String::from(SCANNER_ID),
-                name: String::from(SCANNER_NAME),
+                id: opts.scanner_id.clone(),
+                name: opts.scanner_name.clone(),
             },
             ..Default::default()
         }
