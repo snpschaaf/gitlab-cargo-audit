@@ -18,6 +18,7 @@ use gitlab::dependency_scanning_report;
 use crate::gitlab::dependency_scanning_report::{DependencyScanningReport, DSRVulnerability};
 use crate::gitlab::quality_report::{QualityReport, QualityReportContent};
 use crate::gitlab::quality_report_location::QualityLocation;
+use crate::gitlab::quality_severity::QualitySeverity;
 
 /// Simple program to greet a person
 #[derive(Parser, Debug, Clone)]
@@ -119,6 +120,24 @@ fn json(audit_json: impl AsRef<Path>, out: impl AsRef<Path>, args: CliArgs) -> a
                     }
                 })
                 .collect();
+
+            let quality_report = match quality_report.len() {
+                0 => vec![
+                    QualityReport {
+                        description: "No CVEs detected".to_string(),
+                        content: Some(QualityReportContent {
+                            body: "No CVEs found in rustsec database".to_string(),
+                        }),
+                        severity: Some(QualitySeverity::Info),
+                        location: QualityLocation {
+                            path: "Cargo.lock".to_string(),
+                            lines: Default::default()
+                        },
+                        ..Default::default()
+                    }
+                ],
+                _ => quality_report
+            };
 
             let of = File::create(out.as_ref())?;
             serde_json::to_writer_pretty(of, &quality_report)?;
