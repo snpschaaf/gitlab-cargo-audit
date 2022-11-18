@@ -3,17 +3,19 @@
 //! See: https://gitlab.com/gitlab-org/security-products/security-report-schemas/-/blob/master/dist/dependency-scanning-report-format.json
 
 use serde::Serialize;
+use crate::gitlab::confidence::Confidence;
+use crate::gitlab::vulnerability_severity::VulnerabilitySeverity;
 
 #[derive(Serialize, Debug, Default)]
-pub struct Report {
+pub struct DependencyScanningReport {
     pub version: String,
-    pub vulnerabilities: Vec<Vulnerability>,
+    pub vulnerabilities: Vec<DSRVulnerability>,
     // pub remediations: Option<Vec<Remediation>>,
     pub dependency_files: Vec<DependencyFile>,
 }
 
 #[derive(Serialize, Debug, Default)]
-pub struct Vulnerability {
+pub struct DSRVulnerability {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
     pub category: String,
@@ -24,7 +26,7 @@ pub struct Vulnerability {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub description: Option<String>,
     pub cve: String,
-    pub severity: Severity,
+    pub severity: VulnerabilitySeverity,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub confidence: Option<Confidence>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -36,35 +38,6 @@ pub struct Vulnerability {
     //pub details: ???,
     //pub tracking: ???,
     pub location: Location,
-}
-
-#[allow(dead_code)]
-#[derive(Serialize, Debug)]
-pub enum Severity {
-    Info,
-    Unknown,
-    Low,
-    Medium,
-    High,
-    Critical,   
-}
-
-impl Default for Severity {
-    fn default() -> Self {
-        Self::Unknown
-    }
-}
-
-#[allow(dead_code)]
-#[derive(Serialize, Debug)]
-pub enum Confidence {
-    Ignore,
-    Unknown,
-    Experimental,
-    Low,
-    Medium,
-    High,
-    Confirmed,
 }
 
 #[derive(Serialize, Debug, Default)]
