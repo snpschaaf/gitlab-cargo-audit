@@ -116,6 +116,7 @@ fn json(audit_json: impl AsRef<Path>, out: impl AsRef<Path>, args: CliArgs) -> a
                             path: "Cargo.lock".to_string(),
                             lines: Default::default()
                         },
+                        fingerprint: Some(v.advisory.id.as_str().to_string()),
                         ..Default::default()
                     }
                 })
@@ -133,6 +134,7 @@ fn json(audit_json: impl AsRef<Path>, out: impl AsRef<Path>, args: CliArgs) -> a
                             path: "Cargo.lock".to_string(),
                             lines: Default::default()
                         },
+                        fingerprint: Some("no-cargo-audit-vulnerability".to_string()),
                         ..Default::default()
                     }
                 ],
